@@ -222,13 +222,9 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ matrix.device }}" = "a57" ]; then
-            python3 - <<'PY' >> "$GITHUB_OUTPUT"
-import tomllib
-stock = tomllib.load(open("devices/a57.toml", "rb"))["stock"]
-print("version=" + stock["version"])
-print("recovery=" + stock["recovery"])
-print("image=" + stock["image"])
-PY
+            echo "version=$(sed -n 's/^version = "\(.*\)"$/\1/p' devices/a57.toml)" >> "$GITHUB_OUTPUT"
+            echo "recovery=$(sed -n 's/^recovery = "\(.*\)"$/\1/p' devices/a57.toml)" >> "$GITHUB_OUTPUT"
+            echo "image=$(sed -n 's/^image = "\(.*\)"$/\1/p' devices/a57.toml)" >> "$GITHUB_OUTPUT"
           else
             tools/skyward-pack stock --config "devices/${{ matrix.device }}.toml" >> "$GITHUB_OUTPUT"
           fi
