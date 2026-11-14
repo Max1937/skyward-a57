@@ -104,6 +104,99 @@ jobs:
             echo "devices=$(basename -s .toml devices/*.toml | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
           fi
 
+  kernel:
+    name: Kernel for a57
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Make room for the kernel build
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 10
+      - uses: actions/checkout@v7
+        with:
+          repository: XuexGao/android_kernel_oppo_msm8937
+          ref: lineage-22.1-k4.19
+          path: kernel
+          fetch-depth: 1
+      - uses: actions/checkout@v7
+        with:
+          path: skyward
+          fetch-depth: 1
+      # The fragments live here so that a recovery need (the prima WLAN
+      # driver the phone's own kernel left out, say) takes effect without a
+      # push to the kernel tree: anything carried here overrides the tree's
+      # own fragment of the same name.
+      - name: Take the recovery's config fragments from this repository
+        run: |
+          set -euo pipefail
+          FRAGMENTS="vendor/mi8953.config vendor/oppo-common.config vendor/oppo-a57.config vendor/oppo-no-ksu.config vendor/oppo-recovery.config"
+          for frag in ${FRAGMENTS}; do
+            if test -f "skyward/kernel/${frag#vendor/}"; then
+              mkdir -p "kernel/arch/arm64/configs/$(dirname "${frag}")"
+              cp "skyward/kernel/${frag#vendor/}" "kernel/arch/arm64/configs/${frag}"
+              echo "overrode arch/arm64/configs/${frag} with the recovery's"
+            fi
+          done
+      - name: Install the build's dependencies
+        run: |
+          set -euo pipefail
+          APT_OPTS="-o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+          PKGS="build-essential bc bison flex libssl-dev libncurses-dev libfl-dev libelf-dev \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi cpio lz4 lzop zstd zip unzip \
+            device-tree-compiler ccache python3 liblz4-tool"
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ${APT_OPTS} ${PKGS} \
+            || { sudo apt-get update ${APT_OPTS}; sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ${APT_OPTS} ${PKGS}; }
+      - name: Cache the Clang 13 toolchain
+        id: clang-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/toolchain
+          key: clang-13.0.1-20230207-${{ runner.os }}-${{ runner.arch }}
+      - name: Download the Clang 13 toolchain
+        if: steps.clang-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          wget -q "https://github.com/ZyCromerZ/Clang/releases/download/13.0.1-20230207-release/Clang-13.0.1-20230207.tar.gz" -O clang.tar.gz
+          mkdir -p "${GITHUB_WORKSPACE}/toolchain"
+          tar xzf clang.tar.gz -C "${GITHUB_WORKSPACE}/toolchain"
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: kernel419-a57-recovery
+          restore-keys: |
+            kernel419-a57-recovery-
+          max-size: 2G
+      - name: Build Image.gz-dtb
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          export PATH="${GITHUB_WORKSPACE}/toolchain/bin:/usr/lib/ccache:${PATH}"
+          export KBUILD_BUILD_USER="Max1937"
+          export KBUILD_BUILD_HOST="localhost"
+          export KBUILD_BUILD_TIMESTAMP="$(date -u +'%a %d %b %Y %H:%M:%S UTC')"
+          MAKEFLAGS=(
+            O=out ARCH=arm64 LOCALVERSION=
+            CC="ccache clang"
+            CLANG_TRIPLE=aarch64-linux-gnu-
+            CROSS_COMPILE=aarch64-linux-gnu-
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+            CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+          )
+          CONFIGS=(vendor/msm8953-perf_defconfig)
+          for frag in vendor/mi8953.config vendor/oppo-common.config vendor/oppo-a57.config vendor/oppo-no-ksu.config vendor/oppo-recovery.config; do
+            test -f "arch/arm64/configs/${frag}" || { echo "::error::no such config fragment: ${frag}"; exit 1; }
+            CONFIGS+=("${frag}")
+          done
+          make "${MAKEFLAGS[@]}" -j1 "${CONFIGS[@]}"
+          make "${MAKEFLAGS[@]}" -j"$(nproc --all)" Image.gz-dtb
+          test -f out/arch/arm64/boot/Image.gz-dtb
+          cp out/arch/arm64/boot/Image.gz-dtb "${GITHUB_WORKSPACE}/Image.gz-dtb-a57"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kernel-a57
+          path: Image.gz-dtb-a57
+          if-no-files-found: error
+          retention-days: 1
+
   recovery:
     name: Recovery for ${{ matrix.device }}
     needs: [tools, devices]
@@ -138,6 +231,21 @@ jobs:
         env:
           RECOVERY: ${{ steps.stock.outputs.recovery }}
         run: echo "$RECOVERY  stock/recovery.img" | sha256sum --check
+      # The a57's own kernel carries the drivers its recovery needs (the
+      # prima WLAN one, the fingerprint reader, the display clock fix),
+      # which the stock image's kernel left out; the ramdisk stays.
+      - name: Put the built kernel under the stock ramdisk
+        if: matrix.device == 'a57'
+        run: |
+          set -euo pipefail
+          tools/skyward-pack boot --kernel "Image.gz-dtb-a57" --ramdisk stock/recovery.img --out stock/booted.img
+          mv stock/booted.img stock/recovery.img
+      - name: Take the kernel in
+        if: matrix.device == 'a57'
+        uses: actions/download-artifact@v8
+        with:
+          name: kernel-a57
+          path: .
       - name: Pack the recovery
         id: pack
         env:
