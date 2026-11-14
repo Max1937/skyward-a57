@@ -26,12 +26,6 @@ const REPAIR_F2FS: [&str; 6] = ["-f", "-y", "--no-kernel-check", "-c", "10000", 
 /// without asking.
 const REPAIR_EXT: [&str; 2] = ["-f", "-y"];
 
-/// What checks ext4 before it is mounted writable, the way a phone's fs_mgr
-/// checks it: the whole filesystem forced through, and every safe fix made
-/// without asking, as e2fsck -p does. The recovery reads the on-disk
-/// filesystem, which on the OPPO A57 is ext4, so it must check ext4 too.
-const CHECK_EXT: [&str; 2] = ["-p", "-f"];
-
 /// What gives each file in an ext4 filesystem blocks of its own again.
 const UNSHARE_EXT: [&str; 3] = ["-p", "-E", "unshare_blocks"];
 
@@ -56,10 +50,6 @@ pub fn check(device: &Path, filesystem: &str) -> Result<Checked> {
     match filesystem {
         "f2fs" => {
             let ran = tools::find(FSCK_F2FS)?.run(&arguments(&CHECK_F2FS, device)?)?;
-            Ok(Checked { status: ran.status, said: ran.said })
-        }
-        "ext4" | "ext3" | "ext2" => {
-            let ran = tools::find(E2FSCK)?.run(&arguments(&CHECK_EXT, device)?)?;
             Ok(Checked { status: ran.status, said: ran.said })
         }
         other => bail!("{} holds {other}, which the recovery does not check before writing to it", device.display()),
@@ -136,7 +126,7 @@ mod tests {
 
     #[test]
     fn a_filesystem_the_recovery_does_not_check_or_repair_is_refused() {
-        assert!(check(Path::new("/dev/x"), "erofs").is_err(), "only f2fs and ext4 are checked before mounting");
+        assert!(check(Path::new("/dev/x"), "ext4").is_err(), "only f2fs is checked before mounting");
         assert!(repair(Path::new("/dev/x"), "erofs").is_err());
     }
 
