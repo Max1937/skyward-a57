@@ -14,7 +14,16 @@ mod android {
     const CONTROL: &str = "/dev/loop-control";
 
     const GET_FREE: u32 = 0x4C82;
-    const CONFIGURE: u32 = 0x4C0A;
+    /// Bind the file first and describe the part of it to read afterwards.
+    /// `LOOP_CONFIGURE`, which does the two at once, arrived in Linux 5.8;
+    /// the 4.19 kernels of the older phones answer it as though it worked
+    /// while the device reads nothing at all.
+    const SET_FD: u32 = 0x4C00;
+    const SET_STATUS64: u32 = 0x4C04;
+    /// A device the kernel handed out as free may still carry an old
+    /// association. Clear it before binding ours, or the old association
+    /// wins and every read answers with nothing at all.
+    const CLR_FD: u32 = 0x4C01;
 
     /// The device only ever reads. It stays pointed at the file until the
     /// recovery ends, which is as long as anything mounted from it lasts.
