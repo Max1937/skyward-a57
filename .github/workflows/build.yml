@@ -263,6 +263,8 @@ jobs:
         run: |
           set -euo pipefail
           test -f "Image.gz-dtb-a57"
+          ls -la stock/ .
+          od -A x -N 32 stock/recovery.img
           tools/skyward-pack boot --kernel "Image.gz-dtb-a57" --ramdisk stock/recovery.img --out stock/booted.img
           mv stock/booted.img stock/recovery.img
       - name: Pack the recovery
