@@ -231,6 +231,12 @@ jobs:
         env:
           RECOVERY: ${{ steps.stock.outputs.recovery }}
         run: echo "$RECOVERY  stock/recovery.img" | sha256sum --check
+      - name: Take the kernel in
+        if: matrix.device == 'a57'
+        uses: actions/download-artifact@v8
+        with:
+          name: kernel-a57
+          path: .
       # The a57's own kernel carries the drivers its recovery needs (the
       # prima WLAN one, the fingerprint reader, the display clock fix),
       # which the stock image's kernel left out; the ramdisk stays.
@@ -238,14 +244,9 @@ jobs:
         if: matrix.device == 'a57'
         run: |
           set -euo pipefail
+          test -f "Image.gz-dtb-a57"
           tools/skyward-pack boot --kernel "Image.gz-dtb-a57" --ramdisk stock/recovery.img --out stock/booted.img
           mv stock/booted.img stock/recovery.img
-      - name: Take the kernel in
-        if: matrix.device == 'a57'
-        uses: actions/download-artifact@v8
-        with:
-          name: kernel-a57
-          path: .
       - name: Pack the recovery
         id: pack
         env:
