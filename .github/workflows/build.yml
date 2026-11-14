@@ -199,7 +199,7 @@ jobs:
 
   recovery:
     name: Recovery for ${{ matrix.device }}
-    needs: [tools, devices]
+    needs: [tools, devices, kernel]
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
