@@ -243,6 +243,7 @@ jobs:
         if: matrix.device == 'a57' && steps.cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
+          mkdir -p stock
           curl -fsSL --retry 5 --retry-delay 3 -o stock/recovery.img "${{ steps.stock.outputs.image }}"
       - name: Check the stock recovery
         env:
