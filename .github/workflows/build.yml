@@ -213,9 +213,25 @@ jobs:
           path: tools
       - name: Make the tools runnable
         run: chmod +x tools/skyward tools/skyward-pack
+      # The a57 has no full-package build to take its recovery partition
+      # out of: its stock image is handed out whole, at the address the
+      # device table names, with its own hash beside it. The other devices
+      # still read theirs the way the packer does.
       - name: Read the stock build the recovery is made on
         id: stock
-        run: tools/skyward-pack stock --config "devices/${{ matrix.device }}.toml" >> "$GITHUB_OUTPUT"
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.device }}" = "a57" ]; then
+            python3 - <<'PY' >> "$GITHUB_OUTPUT"
+import tomllib
+stock = tomllib.load(open("devices/a57.toml", "rb"))["stock"]
+print("version=" + stock["version"])
+print("recovery=" + stock["recovery"])
+print("image=" + stock["image"])
+PY
+          else
+            tools/skyward-pack stock --config "devices/${{ matrix.device }}.toml" >> "$GITHUB_OUTPUT"
+          fi
       - name: Restore the stock recovery
         id: cache
         uses: actions/cache@v6
@@ -225,8 +241,13 @@ jobs:
       # Only what the recovery partition takes is read of the package,
       # which is several gigabytes in all.
       - name: Take the recovery partition out of the stock package
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: matrix.device != 'a57' && steps.cache.outputs.cache-hit != 'true'
         run: tools/skyward-pack stock --config "devices/${{ matrix.device }}.toml" --out stock/recovery.img
+      - name: Take the stock image whole
+        if: matrix.device == 'a57' && steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 5 --retry-delay 3 -o stock/recovery.img "${{ steps.stock.outputs.image }}"
       - name: Check the stock recovery
         env:
           RECOVERY: ${{ steps.stock.outputs.recovery }}
