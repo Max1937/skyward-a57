@@ -48,14 +48,6 @@ mod android {
         init: [u64; 2],
     }
 
-    #[repr(C)]
-    struct Config {
-        fd: u32,
-        block_size: u32,
-        info: Info,
-        reserved: [u64; 8],
-    }
-
     /// Open `file` from `offset` for `length` bytes as a block device, and
     /// give its path. The device goes away once whatever is mounted from it
     /// is unmounted.
@@ -67,18 +59,34 @@ mod android {
             return Err(std::io::Error::last_os_error()).context("ask for a free loop device");
         }
         let path = free_device(number as u32)?;
+        // Opened read-only on purpose: a device opened for writing and then
+        // turned read-only by the status below stops reading altogether on
+        // the older kernels, while one opened read-only reads from the
+        // start. The status still says read-only, which agrees with the
+        // mode the device was opened with, so nothing has to switch.
         let device = File::options()
             .read(true)
-            .write(true)
             .open(&path)
             .with_context(|| format!("open {}", path.display()))?;
-        let mut config: Config = unsafe { std::mem::zeroed() };
-        config.fd = backing.as_raw_fd() as u32;
-        config.info.offset = offset;
-        config.info.size_limit = length;
-        config.info.flags = READ_ONLY;
-        if unsafe { libc::ioctl(device.as_raw_fd(), CONFIGURE as libc::Ioctl, &mut config) } < 0 {
-            return Err(std::io::Error::last_os_error()).with_context(|| format!("point {} at {}", path.display(), file.display()));
+        let _ = unsafe { libc::ioctl(device.as_raw_fd(), CLR_FD as libc::Ioctl) };
+        let fd = backing.as_raw_fd();
+        if unsafe { libc::ioctl(device.as_raw_fd(), SET_FD as libc::Ioctl, fd) } < 0 {
+            return Err(std::io::Error::last_os_error())
+                .with_context(|| format!("bind {} to {}", file.display(), path.display()));
+        }
+        let mut info: Info = unsafe { std::mem::zeroed() };
+        info.offset = offset;
+        info.size_limit = length;
+        info.flags = READ_ONLY;
+        // The older driver keeps the backing file by this name; leaving it
+        // empty makes the device read nothing and show no file at all.
+        let name = file.to_string_lossy();
+        let bytes = name.as_bytes();
+        let n = bytes.len().min(info.file_name.len() - 1);
+        info.file_name[..n].copy_from_slice(&bytes[..n]);
+        if unsafe { libc::ioctl(device.as_raw_fd(), SET_STATUS64 as libc::Ioctl, &mut info) } < 0 {
+            return Err(std::io::Error::last_os_error())
+                .with_context(|| format!("describe {} on {}", file.display(), path.display()));
         }
         Ok(path)
     }
